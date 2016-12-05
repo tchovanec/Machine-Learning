@@ -1,0 +1,130 @@
+---
+title: "Machine Learning Assignment"
+author: "Tom Chovanec"
+date: "December 3, 2016"
+output: pdf_document
+---
+
+##Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+
+##Data
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+##Loading the Data
+
+Load the training and testing data sets. 
+
+```{r}
+library(caret)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+
+if(!file.exists("pml-traning.csv")) {
+  
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+}
+
+if(!file.exists("pml-testing.csv")) {
+  
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")
+}
+
+testing_data <- read.csv("pml-testing.csv",na.strings=c("", "NA", "NULL"))
+training_data <- read.csv("pml-training.csv",na.strings=c("", "NA", "NULL"))
+
+```
+
+##Data Cleanup
+Due to columns having mostly NA, I decided to only include columns where the percent of NA's was less than 75% of the column's data. I also removed variables that are unrelated to the classe variable we are predicting. The columns that were removed are the first 7 columns of the data.
+```{r}
+model_training <- training_data[ lapply( training_data, function(x) sum(is.na(x)) / length(x) ) < 0.01 ][-(1:7)]
+
+testing_data <- testing_data[ lapply( testing_data, function(x) sum(is.na(x)) / length(x) ) < 0.01 ][-(1:7)]
+
+```
+##Partition the Dataset
+We are splitting the training data into two sets for cross validation puposes. We randomly subsample 60% of the set for training purposes, while the remaining 40% will be used for testing.  
+```{r}
+set.seed(12345)
+inTrain <- createDataPartition(y=model_training$classe, p=0.6, list=FALSE)
+fit_training <- model_training[inTrain, ]
+fit_testing <- model_training[-inTrain, ]
+
+dim(fit_training)
+dim(fit_testing)
+```
+
+Currently in the fit_training data set (it contains 11776 observations, or about 60% of the entire training data set), and fit_tetsing (it contains 7846 observations, or about 40% of the entire training data set). We now are going to identify and remove zero covariates from the fit_training and fit_testing data sets. 
+
+```{r}
+nzv_cols <- nearZeroVar(fit_training)
+if(length(nzv_cols) > 0) {
+  fit_training <- fit_training[, -nzv_cols]
+  fit_testing <- fit_testing[, -nzv_cols]
+}
+dim(fit_training)
+dim(fit_testing)
+```
+
+This step didn't do anything because the earlier removal of NA was enough to clean the data. We now have 53 clean covariates to build a model for classe. 
+
+##Decision Tree
+I created a quick tree classifier that selects roll_belt as the first discriminant among all 53 covariates.  
+
+```{r}
+modFitDT <- rpart(classe ~ ., data = fit_training, method="class")
+prp(modFitDT)
+```
+
+This tree is not expected to have high accuracy.
+
+```{r}
+set.seed(12345)
+prediction <- predict(modFitDT, fit_testing, type = "class")
+confusionMatrix(prediction, fit_testing$classe)
+```
+As you can see the decision tree has an accuracy around 73%. We will no longer investigate tree classifiers further because the Random Forest algorithm will prove much more accurate.
+
+##Random Forest
+We fit a predictive model using Random Forest algorithm using a 2-fold cross-validation control. This is the simplest k-fold cross-validation possible and it will give a reduced computation time. 
+
+```{r}
+library(randomForest)
+modelRf <- train(classe ~ ., data=fit_training, method="rf", trControl=trainControl(method="cv",number=2))
+
+modelRf
+```
+
+We now will validate the performance on the test data set. 
+```{r}
+predictRf <- predict(modelRf, fit_testing)
+confusionMatrix(fit_testing$classe, predictRf)
+
+se <- 1 - as.numeric(confusionMatrix(fit_testing$classe, predictRf)$overall[1])
+se
+```
+So, the estimated accuracy of the model is 99.22% and the estimated out-of-sample error is 0.77.
+
+
+##Predicting for test data 
+We will now apply the random forest model to the test data that we downloaded. 
+```{r}
+answers <- predict(modelRf, testing_data)
+answers
+
+```
